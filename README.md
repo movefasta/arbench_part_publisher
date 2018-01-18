@@ -9,6 +9,6 @@ This is a ROS node for publishing feature frames annotated using ARBench. It exp
 All published frames are prefixed with the name of the part. 
 
 ## Implementation list
-- [] Get services to work
+- [x] Get services to work
 - [] Add service able to access part info (the estimated volume, COM, principal properties)
 - [] Make mesh publishing an option
