@@ -1,0 +1,7 @@
+string parent_id
+string frame_id
+geometry_msgs/Vector3 origin
+float64 roll
+float64 pitch
+float64 yaw
+---
