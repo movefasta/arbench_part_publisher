@@ -27,7 +27,7 @@ import tf2_msgs
 import geometry_msgs.msg
 import threading
 import arbench_part_publisher.srv as srvs
-
+import visualization_msgs.msg as viz_msg
 
 class BasePublisher(object):
     def __init__(self, prefix="", rate=50):
@@ -131,7 +131,8 @@ class ARBenchPartPublisher(BasePublisher):
     def __init__(self, part_name,
                  x=0, y=0, z=0,  # initial origin
                  roll=0, pitch=0, yaw=0,  # initial rpy
-                 rate=50):
+                 rate=50, mesh="",  # Rate and optional mesh
+                 red=0.53, green=0.53, blue=0.53, alpha=1):  # meshcol
         BasePublisher.__init__(self, prefix=part_name, rate=rate)
         part_frame = geometry_msgs.msg.TransformStamped()
         part_frame.header.frame_id = "world"
@@ -146,6 +147,47 @@ class ARBenchPartPublisher(BasePublisher):
         part_frame.transform.rotation.w = q[3]
         self.addFrame(part_frame)
 
+        if not mesh == "":
+            self.mesh_available = True
+            self.pub_mesh = rospy.Publisher("visualization_marker",
+                                            viz_msg.Marker,
+                                            queue_size=1)
+            self.mesh_marker = viz_msg.Marker()
+            self.mesh_marker.header.frame_id = self.prefix + "_part_frame"
+            self.mesh_marker.ns = self.prefix
+            self.mesh_marker.id = 0
+            self.mesh_marker.type = viz_msg.Marker.MESH_RESOURCE
+            self.mesh_marker.action = 0
+            self.mesh_marker.pose.position.x = 0
+            self.mesh_marker.pose.position.y = 0
+            self.mesh_marker.pose.position.z = 0
+            self.mesh_marker.pose.orientation.x = 0
+            self.mesh_marker.pose.orientation.y = 0
+            self.mesh_marker.pose.orientation.z = 0
+            self.mesh_marker.pose.orientation.w = 1
+            self.mesh_marker.scale.x = 1e-3
+            self.mesh_marker.scale.y = 1e-3
+            self.mesh_marker.scale.z = 1e-3
+            self.mesh_marker.color.r = red
+            self.mesh_marker.color.g = green
+            self.mesh_marker.color.b = blue
+            self.mesh_marker.color.a = alpha
+            self.mesh_marker.lifetime = rospy.Time.from_sec(1.0/rate)
+            self.mesh_marker.mesh_resource = mesh
+        else:
+            self.mesh_available = False
+
+    def publish(self):
+        fl = []
+        with self.lock:
+            for fname, frame in self.frames.items():
+                frame.header.stamp = rospy.Time.now()
+                fl.append(frame)
+            if self.mesh_available:
+                mesh_marker = self.mesh_marker
+                mesh_marker.header.stamp = rospy.Time.now()
+                self.pub_mesh.publish(mesh_marker)
+            self.pub_tf.publish(fl)
 
 def placement2transform(pl, tr):
     tr.transform.translation.x = pl["origin"][0]
@@ -179,16 +221,25 @@ if __name__ == "__main__":
     parser.add_argument("-jsonfile",
                         help="Json file from which to import feature frames",
                         type=str)
+    parser.add_argument("-mesh", default="",
+                        help="STL or COLLADA file for the mesh",
+                        type=str)
+    parser.add_argument("-rgba",
+                        help="rgba for mesh. E.g. -rgba 0.1 0.2 0.3 1.0",
+                        nargs=4, default=[.53, .53, .53, 1.], type=float)
+    
     args, unknown_args = parser.parse_known_args()
 
     part_tf = ARBenchPartPublisher(part_name=args.part_name,
                                    x=args.xyz[0], y=args.xyz[1], z=args.xyz[2],
                                    roll=args.rpy[0], pitch=args.rpy[1], yaw=args.rpy[2],
-                                   rate=args.rate)
+                                   rate=args.rate, mesh=args.mesh,
+                                   red=args.rgba[0], green=args.rgba[1], blue=args.rgba[2],
+                                   alpha=args.rgba[3])
     if args.jsonfile is not None:
         with open(args.jsonfile, 'r') as f:
             part_props = json.load(f)
-            feat_dict = part_props["features"]
+        feat_dict = part_props["features"]
         for fname in feat_dict.keys():
             t = geometry_msgs.msg.TransformStamped()
             t.header.frame_id = args.part_name+"_part_frame"
