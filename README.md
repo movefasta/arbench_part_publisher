@@ -10,5 +10,5 @@ All published frames are prefixed with the name of the part.
 
 ## Implementation list
 - [x] Get services to work
-- [] Add service able to access part info (the estimated volume, COM, principal properties)
+- [ ] Add service able to access part info (the estimated volume, COM, principal properties)
 - [x] Make mesh publishing an option
