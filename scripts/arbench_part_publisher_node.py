@@ -130,7 +130,7 @@ class BasePublisher(object):
 class ARBenchPartPublisher(BasePublisher):
     def __init__(self, part_name,
                  x=0, y=0, z=0,  # initial origin
-                 roll=0, pitch=0, yaw=0,  # initial rpy
+                 qx=0, qy=0, qz=0, qw=1,  # initial quaternion
                  rate=50, mesh="",  # Rate and optional mesh
                  red=0.53, green=0.53, blue=0.53, alpha=1):  # meshcol
         BasePublisher.__init__(self, prefix=part_name, rate=rate)
@@ -140,11 +140,10 @@ class ARBenchPartPublisher(BasePublisher):
         part_frame.transform.translation.x = x
         part_frame.transform.translation.y = y
         part_frame.transform.translation.z = z
-        q = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
-        part_frame.transform.rotation.x = q[0]
-        part_frame.transform.rotation.y = q[1]
-        part_frame.transform.rotation.z = q[2]
-        part_frame.transform.rotation.w = q[3]
+        part_frame.transform.rotation.x = qx
+        part_frame.transform.rotation.y = qy
+        part_frame.transform.rotation.z = qz
+        part_frame.transform.rotation.w = qw
         self.addFrame(part_frame)
 
         if not mesh == "":
@@ -215,9 +214,9 @@ if __name__ == "__main__":
     parser.add_argument("-xyz",
                         help="initial xyz coordinates. E.g. -xyz 0.1 0.2 0.3",
                         nargs=3, default=[0.0, 0.0, 0.0], type=float)
-    parser.add_argument("-rpy",
-                        help="initial euler angles. E.g. -rpy 0.1 0.2 0.3",
-                        nargs=3, default=[0.0, 0.0, 0.0], type=float)
+    parser.add_argument("-quat",
+                        help="initial quaternion. E.g. -quat 0.0 0.0 0.0 1.0",
+                        nargs=4, default=[0.0, 0.0, 0.0, 1.0], type=float)
     parser.add_argument("-jsonfile",
                         help="Json file from which to import feature frames",
                         type=str)
@@ -227,12 +226,13 @@ if __name__ == "__main__":
     parser.add_argument("-rgba",
                         help="rgba for mesh. E.g. -rgba 0.1 0.2 0.3 1.0",
                         nargs=4, default=[.53, .53, .53, 1.], type=float)
-    
+
     args, unknown_args = parser.parse_known_args()
 
     part_tf = ARBenchPartPublisher(part_name=args.part_name,
                                    x=args.xyz[0], y=args.xyz[1], z=args.xyz[2],
-                                   roll=args.rpy[0], pitch=args.rpy[1], yaw=args.rpy[2],
+                                   qx=args.quat[0], qy=args.quat[1],
+                                   qz=args.quat[2], qw=args.quat[3],
                                    rate=args.rate, mesh=args.mesh,
                                    red=args.rgba[0], green=args.rgba[1], blue=args.rgba[2],
                                    alpha=args.rgba[3])
