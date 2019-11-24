@@ -29,175 +29,166 @@ import threading
 import arbench_part_publisher.srv as srvs
 import visualization_msgs.msg as viz_msg
 
-class BasePublisher(object):
-    def __init__(self, prefix="", rate=50):
-        rospy.init_node("arbench_part_publisher", anonymous=True)
-        self.prefix = prefix
+
+class PartsPublisher(object):
+    """This is an object which takes a set of arbench_part descriptors,
+    and publishes their information. It also exposes a set of services
+    which can be used to modify the frames involved.
+
+    mesh_freq defines how many tf publishings should happen before we
+    publish. Set it to -1 to never republish
+    """
+    def __init__(self, parts, prefix="", rate=50, mesh_freq=10):
+        rospy.init_node("parts_publisher", anonymous=True)
+        self.prefix = prefix  # namespace of all services
+        self.rate = rospy.Rate(rate)
         self.pub_tf = rospy.Publisher("/tf",
                                       tf2_msgs.msg.TFMessage,
                                       queue_size=1)
-        self.rate = rospy.Rate(rate)
-        self.frames = {}
+        self.pub_viz = rospy.Publisher("/visualization_marker_array",
+                                       viz_msg.MarkerArray,
+                                       queue_size=1)
+        self.parts = parts  # List of arbench parts
         self.lock = threading.Lock()
+        self.services = []  # List of all services
+        self.mesh_freq = mesh_freq  # every mesh_freq'd publish, add mesh too.
+        self.setup_parts()
+        self.publish_viz()
 
-        self.services = [
-            rospy.Service(prefix + "/remove_frame",
-                          srvs.RemoveFrame,
-                          self.removeFrameHandler),
-            rospy.Service(prefix + "/add_frame",
-                          srvs.AddFrame,
-                          self.addFrameHandler),
-            rospy.Service(prefix + "/add_frame_xyzq",
-                          srvs.AddFrameXYZQ,
-                          self.addFrameXYZQHandler),
-            rospy.Service(prefix + "/get_frames",
-                          srvs.GetFrames,
-                          self.getFramesHandler)
-        ]
+    def setup_parts(self):
+        prefix = self.prefix
+        # To bind the part label to the call, we use a bit hacky lambda
+        # approach
+        for part in self.parts:
+            self.services += [
+                rospy.Service(prefix+"/"+part.safe_label+"/remove_frame",
+                              srvs.RemoveFrame,
+                              lambda req: self.remove_frame(part, req)),
+                rospy.Service(prefix+"/"+part.safe_label+"/add_frame",
+                              srvs.AddFrame,
+                              lambda req: self.add_frame(part, req)),
+                rospy.Service(prefix+"/"+part.safe_label+"/get_frames",
+                              srvs.GetFrames,
+                              lambda req: self.get_frames(part, req))
+            ]
 
-    def run(self):
-        while not rospy.is_shutdown():
-            self.publish()
-            self.rate.sleep()
-
-    def publish(self):
-        fl = []
+    def remove_frame(self, part, req):
         with self.lock:
-            for fname, frame in self.frames.items():
-                frame.header.stamp = rospy.Time.now()
-                fl.append(frame)
-            self.pub_tf.publish(fl)
-
-    def removeFrame(self, frame_id):
-        if not self.prefix == "":
-            if not str(frame_id).startswith(self.prefix+"_"):
-                frame_id = self.prefix + "_" + frame_id
-        with self.lock:
-            if frame_id in self.frames.keys():
-                del self.frames[frame_id]
-
-    def removeFrameHandler(self, req):
-        self.removeFrame(req.frame_id)
+            if req.frame_id in part.frames.keys():
+                del part.frames[req.frame_id]
         return srvs.RemoveFrameResponse()
 
-    def addFrame(self, f):
-        if not self.prefix == "":
-            if not str(f.child_frame_id).startswith(self.prefix + "_"):
-                f.child_frame_id = self.prefix + "_" + str(f.child_frame_id)
+    def add_frame(self, part, req):
+        child_frame_id = req.tr.child_frame_id
         with self.lock:
-            self.frames[f.child_frame_id] = f
-
-    def addFrameHandler(self, req):
-        self.addFrame(req.tr)
+            part.frames[child_frame_id] = req.tr
         return srvs.AddFrameResponse()
 
-    def addFrameXYZQ(self, parent_id, frame_id, origin, rotation):
-        t = geometry_msgs.msg.TransformStamped()
-        t.header.frame_id = parent_id
-        if not self.prefix == "":
-            if not str(frame_id).startswith(self.prefix + "_"):
-                frame_id = self.prefix + "_" + str(frame_id)
-        t.child_frame_id = frame_id
-        t.transform.translation = origin
-        t.transform.rotation = rotation
+
+    def get_frames(self, part, req):
         with self.lock:
-            self.frames[frame_id] = t
+            return srvs.GetFramesResponse(part.frames.keys())
 
-    def addFrameXYZQHandler(self, req):
-        self.addFrameXYZQ(req.parent_id, req.frame_id,
-                          req.origin, req.rotation)
-        return srvs.AddFrameXYZQResponse()
-
-    def addFramePlacement(self, parent_id, frame_id, placement):
-        t = geometry_msgs.msg.TransformStamped()
-        t.header.frame_id = parent_id
-        if not self.prefix == "":
-            if not str(frame_id).startswith(self.prefix + "_"):
-                frame_id = self.prefix + "_" + frame_id
-        t.child_frame_id = frame_id
-        placement2transform(placement, t)
-        with self.lock:
-            self.frames[frame_id] = t
-
-    def getFrames(self):
-        return self.frames.keys()
-
-    def getFramesHandler(self, req):
-        with self.lock:
-            return srvs.GetFramesResponse(self.getFrames())
-
-
-class ARBenchPartPublisher(BasePublisher):
-    def __init__(self, part_name,
-                 x=0, y=0, z=0,  # initial origin
-                 qx=0, qy=0, qz=0, qw=1,  # initial quaternion
-                 rate=50, mesh="",  # Rate and optional mesh
-                 red=0.53, green=0.53, blue=0.53, alpha=1):  # meshcol
-        BasePublisher.__init__(self, prefix=part_name, rate=rate)
-        part_frame = geometry_msgs.msg.TransformStamped()
-        part_frame.header.frame_id = "world"
-        part_frame.child_frame_id = self.prefix + "_part_frame"
-        part_frame.transform.translation.x = x
-        part_frame.transform.translation.y = y
-        part_frame.transform.translation.z = z
-        part_frame.transform.rotation.x = qx
-        part_frame.transform.rotation.y = qy
-        part_frame.transform.rotation.z = qz
-        part_frame.transform.rotation.w = qw
-        self.addFrame(part_frame)
-
-        if not mesh == "":
-            self.mesh_available = True
-            self.pub_mesh = rospy.Publisher("visualization_marker",
-                                            viz_msg.Marker,
-                                            queue_size=1)
-            self.mesh_marker = viz_msg.Marker()
-            self.mesh_marker.header.frame_id = self.prefix + "_part_frame"
-            self.mesh_marker.ns = self.prefix
-            self.mesh_marker.id = 0
-            self.mesh_marker.type = viz_msg.Marker.MESH_RESOURCE
-            self.mesh_marker.action = 0
-            self.mesh_marker.pose.position.x = 0
-            self.mesh_marker.pose.position.y = 0
-            self.mesh_marker.pose.position.z = 0
-            self.mesh_marker.pose.orientation.x = 0
-            self.mesh_marker.pose.orientation.y = 0
-            self.mesh_marker.pose.orientation.z = 0
-            self.mesh_marker.pose.orientation.w = 1
-            self.mesh_marker.scale.x = 1e-3
-            self.mesh_marker.scale.y = 1e-3
-            self.mesh_marker.scale.z = 1e-3
-            self.mesh_marker.color.r = red
-            self.mesh_marker.color.g = green
-            self.mesh_marker.color.b = blue
-            self.mesh_marker.color.a = alpha
-            self.mesh_marker.lifetime = rospy.Time.from_sec(1.0/rate)
-            self.mesh_marker.mesh_resource = mesh
-        else:
-            self.mesh_available = False
-
-    def publish(self):
+    def publish_tf(self):
         fl = []
         with self.lock:
-            for fname, frame in self.frames.items():
-                frame.header.stamp = rospy.Time.now()
-                fl.append(frame)
-            if self.mesh_available:
-                mesh_marker = self.mesh_marker
-                mesh_marker.header.stamp = rospy.Time.now()
-                self.pub_mesh.publish(mesh_marker)
+            for part in self.parts:
+                for fname in part.frames.keys():
+                    part.frames[fname].header.stamp = rospy.Time.now()
+                    fl.append(part.frames[fname])
             self.pub_tf.publish(fl)
 
-def placement2transform(pl, tr):
-    tr.transform.translation.x = pl["origin"][0]
-    tr.transform.translation.y = pl["origin"][1]
-    tr.transform.translation.z = pl["origin"][2]
-    q = tf.transformations.quaternion_about_axis(pl["rotation"]["angle"],
-                                                 pl["rotation"]["axis"])
-    tr.transform.rotation.x = q[0]
-    tr.transform.rotation.y = q[1]
-    tr.transform.rotation.z = q[2]
-    tr.transform.rotation.w = q[3]
+    def publish_viz(self):
+        ml = []
+        with self.lock:
+            for idx, part in enumerate(self.parts):
+                if part.marker is not None:
+                    part.marker.ns = self.prefix
+                    part.marker.id = idx
+                    ml.append(part.marker)
+            self.pub_viz.publish(viz_msg.MarkerArray(ml))
+
+    def run(self):
+        idx = 0
+        while not rospy.is_shutdown():
+            if idx == self.mesh_freq:
+                idx = 0
+                self.publish_viz()
+            if self.mesh_freq >= 0:
+                # Set mesh_freq to -1 to never update
+                idx += 1
+            self.publish_tf()
+            self.rate.sleep()
+
+
+class ArbenchPart(object):
+    """This is an Arbench part."""
+    def __init__(self, label, frames={}, mesh_uri="", marker=None):
+        self.label = label
+        self.safe_label = label.replace("-", "_")
+        self.frames = frames
+        # Setup marker
+        if mesh_uri != "":
+            self.set_marker(mesh_uri)
+        else:
+            self.marker = marker
+        # Setup part frame
+        tr = geometry_msgs.msg.TransformStamped()
+        tr.header.frame_id = "world"
+        tr.child_frame_id = label + "_part_frame"
+        tr.transform.translation.x = 0
+        tr.transform.translation.y = 0
+        tr.transform.translation.z = 0
+        tr.transform.rotation.x = 0
+        tr.transform.rotation.y = 0
+        tr.transform.rotation.z = 0
+        tr.transform.rotation.w = 0
+        self.frames[tr.child_frame_id] = tr
+
+    def __eq__(self, other):
+        """It is assumed each part has a unique label"""
+        if self.label == other.label:
+            return True
+        else:
+            return False
+
+    def set_marker(self, mesh_uri):
+        self.marker = viz_msg.Marker()
+        self.marker.header.frame_id = self.label+"_part_frame"
+        self.marker.id = 0
+        self.marker.type = viz_msg.Marker.MESH_RESOURCE
+        self.marker.action = 0
+        self.marker.pose.position.x = 0
+        self.marker.pose.position.y = 0
+        self.marker.pose.position.z = 0
+        self.marker.pose.orientation.x = 0
+        self.marker.pose.orientation.y = 0
+        self.marker.pose.orientation.z = 0
+        self.marker.pose.orientation.w = 1
+        self.marker.scale.x = 1e-3
+        self.marker.scale.y = 1e-3
+        self.marker.scale.z = 1e-3
+        self.marker.color.r = .53
+        self.marker.color.g = .53
+        self.marker.color.b = .53
+        self.marker.color.a = 1
+        self.marker.lifetime = rospy.Time.from_sec(0)
+        self.marker.mesh_resource = mesh_uri
+
+    def add_feature(self, label, x, y, z, qx, qy, qz, qw):
+        """Add a feature to the part.."""
+        tr = geometry_msgs.msg.TransformStamped()
+        tr.header.frame_id = self.label + "_part_frame"
+        # ROS namespacing doesn't allow "-" to be used
+        tr.child_frame_id = self.label + "_" + label.replace("-", "_")
+        tr.transform.translation.x = x
+        tr.transform.translation.y = y
+        tr.transform.translation.z = z
+        tr.transform.rotation.x = qx
+        tr.transform.rotation.y = qy
+        tr.transform.rotation.z = qz
+        tr.transform.rotation.w = qw
+        self.frames[tr.child_frame_id] = tr
 
 
 if __name__ == "__main__":
@@ -229,24 +220,24 @@ if __name__ == "__main__":
 
     args, unknown_args = parser.parse_known_args()
 
-    part_tf = ARBenchPartPublisher(part_name=args.part_name,
-                                   x=args.xyz[0], y=args.xyz[1], z=args.xyz[2],
-                                   qx=args.quat[0], qy=args.quat[1],
-                                   qz=args.quat[2], qw=args.quat[3],
-                                   rate=args.rate, mesh=args.mesh,
-                                   red=args.rgba[0], green=args.rgba[1], blue=args.rgba[2],
-                                   alpha=args.rgba[3])
-    if args.jsonfile is not None:
-        with open(args.jsonfile, 'r') as f:
-            part_props = json.load(f)
-        feat_dict = part_props["features"]
-        for fname in feat_dict.keys():
-            t = geometry_msgs.msg.TransformStamped()
-            t.header.frame_id = args.part_name+"_part_frame"
-            t.child_frame_id = fname
-            placement2transform(feat_dict[fname]["featureplacement"], t)
-            part_tf.addFrame(t)
+    # Define part and modify according to arguments
+    part = ArbenchPart(label=args.part_name,
+                       mesh_uri=args.mesh)
+    tr = part.frames[args.part_name+"_part_frame"]
+    tr.transform.translation.x = args.xyz[0]
+    tr.transform.translation.y = args.xyz[1]
+    tr.transform.translation.z = args.xyz[2]
+    tr.transform.rotation.x = args.quat[0]
+    tr.transform.rotation.y = args.quat[1]
+    tr.transform.rotation.z = args.quat[2]
+    tr.transform.rotation.w = args.quat[3]
+    part.marker.color.r = args.rgba[0]
+    part.marker.color.g = args.rgba[1]
+    part.marker.color.b = args.rgba[2]
+    part.marker.color.a = args.rgba[3]
+
+    part_pub = PartsPublisher([part], rate=50, mesh_freq=300)
     try:
-        part_tf.run()
+        part_pub.run()
     except rospy.ROSInterruptException:
         pass
