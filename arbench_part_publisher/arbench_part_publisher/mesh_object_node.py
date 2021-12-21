@@ -1,25 +1,33 @@
 #!/usr/bin/env python
-import rospy
+import rclpy
+import sys
+import threading
 import visualization_msgs.msg
+from rclpy.exceptions import ROSInterruptException
 
 class MeshVizPublisher(object):
     def __init__(self, marker, rate = 50):
-        rospy.init_node("mesh_viz_object", anonymous=True)
-        self.pub_viz = rospy.Publisher("/visualization_marker", visualization_msgs.msg.Marker, queue_size = 1)
-        self.rate = rospy.Rate(rate)
+        rclpy.init(args=sys.argv)
+        node = rclpy.create_node('mesh_viz_object')
+        self.node = node
+        self.thread = threading.Thread(target=rclpy.spin, args=(node, ), daemon=True)
+        self.thread.start()
+        self.rate = node.create_rate(2)
+        self.pub_viz = node.create_publisher(visualization_msgs.msg.Marker, "/visualization_marker", 10)
         self.marker = marker
         
     def run(self):
-        while not rospy.is_shutdown():
+        while rclpy.ok():
             self.publish()
             self.rate.sleep()
 
     def publish(self):
-        self.marker.header.stamp = rospy.Time.now()
+        self.marker.header.stamp = self.node.get_clock().now().to_msg()
         self.pub_viz.publish(self.marker)
 
-if __name__ == "__main__":
+def main():
     import argparse
+    import json
     parser = argparse.ArgumentParser(description = "Mesh marker publisher for a part.")
     parser.add_argument("tf_topic",
                         help="The tf frame that the mesh follows.")
@@ -30,10 +38,9 @@ if __name__ == "__main__":
     parser.add_argument("--ns",
                         help="namespace of the part",
                         required=False)
-    parser.add_argument(
     parser.add_argument("--rate",
                         help="update rate of the publisher",
-                        required=False
+                        required=False,
                         default=50, type=float)
     args, unknown_args = parser.parse_known_args()
 
@@ -44,10 +51,10 @@ if __name__ == "__main__":
     marker.header.frame_id = args.tf_topic
     marker.ns = ""
     
-    part_mesh_viz_ = MeshVizPublisher(marker=marker, rate=arg.rate)
+    part_mesh_viz = MeshVizPublisher(marker=marker, rate=args.rate)
 
     try:
         part_mesh_viz.run()
-    except rospy.ROSInterruptException:
+    except ROSInterruptException:
         pass
     

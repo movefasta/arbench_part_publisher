@@ -1,12 +1,13 @@
 #!/usr/bin/env python
-from arbench_part_publisher_node import PartsPublisher, ArbenchPart
-import rospy
+from .arbench_part_publisher_node import PartsPublisher, ArbenchPart
+
 import os
 import argparse
 import csv
 import math
+from rclpy.exceptions import ROSInterruptException
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         description="Node that spawns a set of parts using the arbench_part_pu"
         + "blisher. Subdirectories in the folder are assumed to be of the form"
@@ -100,5 +101,5 @@ if __name__ == "__main__":
     part_pub = PartsPublisher(partlist, rate=10, mesh_freq=10)
     try:
         part_pub.run()
-    except rospy.ROSInterruptException:
+    except ROSInterruptException:
         pass
