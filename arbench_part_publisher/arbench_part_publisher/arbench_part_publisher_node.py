@@ -79,20 +79,20 @@ class PartsPublisher(object):
         with self.lock:
             if req.frame_id in part.frames.keys():
                 del part.frames[req.frame_id]
-        return srvs.RemoveFrame()
+        return srvs.RemoveFrame.Response()
 
     def add_frame(self, part, req):
         child_frame_id = req.tr.child_frame_id
         with self.lock:
             part.frames[child_frame_id] = req.tr
-        return srvs.AddFrame()
+        return srvs.AddFrame.Response()
 
 
     def get_frames(self, res, part, req):
         with self.lock:
-            self.node.get_logger().info(str(part.frames.keys()))
-            res.framenames = srvs.GetFrames(part.frames.keys()) 
-            return res
+            frames = srvs.GetFrames.Response()
+            frames.framenames = part.frames.keys()
+            return frames
 
     def publish_tf(self):
         fl = []
